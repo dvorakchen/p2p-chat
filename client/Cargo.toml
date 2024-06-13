@@ -1,0 +1,14 @@
+[package]
+name = "client"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+nat-detect.workspace = true
+rand.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+env_logger.workspace = true
+log.workspace = true
+dotenv.workspace = true
