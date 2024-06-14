@@ -18,6 +18,44 @@ impl Peer {
     pub fn get_email(&self) -> String {
         self.email.clone()
     }
+
+    pub fn to_message_bytes(&self) -> Bytes {
+        let mut bytes = vec![];
+
+        bytes.extend(self.email.clone().as_bytes().to_vec());
+        bytes.push(b'\n');
+        bytes.extend(nat_type_2_string(self.nat_type).as_bytes().to_vec());
+        bytes.push(b'\n');
+        bytes.extend(self.pub_addr.to_string().as_bytes().to_vec());
+
+        bytes.into()
+    }
+}
+
+pub fn string_2_nat_type(value: String) -> NatType {
+    match value.as_str() {
+        "UdpBlocked" => NatType::UdpBlocked,
+        "OpenInternet" => NatType::OpenInternet,
+        "SymmetricUdpFirewall" => NatType::SymmetricUdpFirewall,
+        "FullCone" => NatType::FullCone,
+        "RestrictedCone" => NatType::RestrictedCone,
+        "PortRestrictedCone" => NatType::PortRestrictedCone,
+        "Symmetric" => NatType::Symmetric,
+        _ => NatType::Unknown,
+    }
+}
+
+pub fn nat_type_2_string(nat_type: NatType) -> String {
+    match nat_type {
+        NatType::UdpBlocked => "UdpBlocked".to_string(),
+        NatType::OpenInternet => "OpenInternet".to_string(),
+        NatType::SymmetricUdpFirewall => "SymmetricUdpFirewall".to_string(),
+        NatType::FullCone => "FullCone".to_string(),
+        NatType::RestrictedCone => "RestrictedCone".to_string(),
+        NatType::PortRestrictedCone => "PortRestrictedCone".to_string(),
+        NatType::Symmetric => "Symmetric".to_string(),
+        NatType::Unknown => "Unknown".to_string(),
+    }
 }
 
 #[repr(u8)]
@@ -84,7 +122,7 @@ impl PacketType {
         }
 
         let email = String::from_utf8(bytes[1].to_vec())?;
-        let nat_type = convert_nat_type(String::from_utf8(bytes[2].to_vec())?);
+        let nat_type = string_2_nat_type(String::from_utf8(bytes[2].to_vec())?);
         let pub_addr = String::from_utf8(bytes[3].to_vec())?.parse()?;
 
         Ok(Self::Register(Peer {
@@ -109,17 +147,4 @@ impl PacketType {
 pub enum PacketTypeError {
     #[error("invalid bytes")]
     InvalidBytes,
-}
-
-fn convert_nat_type(value: String) -> NatType {
-    match value.as_str() {
-        "UdpBlocked" => NatType::UdpBlocked,
-        "OpenInternet" => NatType::OpenInternet,
-        "SymmetricUdpFirewall" => NatType::SymmetricUdpFirewall,
-        "FullCone" => NatType::FullCone,
-        "RestrictedCone" => NatType::RestrictedCone,
-        "PortRestrictedCone" => NatType::PortRestrictedCone,
-        "Symmetric" => NatType::Symmetric,
-        _ => NatType::Unknown,
-    }
 }

@@ -1,8 +1,6 @@
-mod peers;
-
 use bytes::Bytes;
-use log::warn;
-use peers::{PacketType, Peer};
+use common::{PacketType, Peer};
+use log::{info, warn};
 
 use std::{collections::HashMap, net::SocketAddr};
 
@@ -22,10 +20,10 @@ impl Server {
     }
 
     pub async fn run(&mut self) {
-        let socket = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+        info!("server listen socket: {:?}", self.socket.local_addr());
 
         let mut buf = [0u8; 1024];
-        while let Ok((size, addr)) = socket.recv_from(&mut buf).await {
+        while let Ok((size, addr)) = self.socket.recv_from(&mut buf).await {
             let packet = {
                 let bytes = Bytes::copy_from_slice(&buf[..size]);
                 PacketType::try_from(bytes).unwrap()
@@ -39,11 +37,9 @@ impl Server {
         match packet {
             PacketType::Register(peer) => self.handle_register_packet(peer),
             PacketType::QueryAddr(email) => {
-                if let Some(pub_addr) = self.handle_query_packet(&email) {
-
-                    let bytes: Bytes = pub_addr.get_pub_addr().to_string().into();
+                if let Some(peer) = self.peers.get(&email) {
+                    let bytes = peer.to_message_bytes();
                     self.socket.send_to(&bytes, recv_addr).await.unwrap();
-                    
                 } else {
                     warn!("cannot found public address of email: {}", email);
                 }
@@ -54,9 +50,5 @@ impl Server {
     fn handle_register_packet(&mut self, peer: Peer) {
         let email = peer.get_email();
         self.peers.insert(email, peer);
-    }
-
-    fn handle_query_packet(&mut self, email: &String) -> Option<&Peer> {
-        self.peers.get(email)
     }
 }

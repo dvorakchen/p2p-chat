@@ -1,11 +1,16 @@
 use client;
 use log::info;
-use std::io::{stdin, stdout, Write};
+use std::{
+    env::args,
+    io::{stdin, stdout, Write},
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().unwrap();
     env_logger::init();
+
+    let server_addr = args().nth(1).unwrap();
 
     let email = {
         print!("enter your email: ");
@@ -16,14 +21,7 @@ async fn main() -> anyhow::Result<()> {
         email
     };
 
-    let mut client = client::Client::new(email).await;
+    let mut client = client::Client::new(email, server_addr.parse().unwrap()).await;
 
-    info!("detecting NAT type...");
-    let (pub_addr, nat_type) = client.detect_nat_type().await?;
-    info!(
-        "NAT detected, public address: {}, NAT type: {:?}",
-        pub_addr, nat_type
-    );
-
-    Ok(())
+    client.run().await
 }

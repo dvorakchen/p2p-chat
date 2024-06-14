@@ -12,3 +12,5 @@ env_logger.workspace = true
 log.workspace = true
 dotenv.workspace = true
 bytes.workspace = true
+
+common = { path = "../common" }

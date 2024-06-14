@@ -1,0 +1,11 @@
+[package]
+name = "common"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+
+nat-detect.workspace = true
+bytes.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
