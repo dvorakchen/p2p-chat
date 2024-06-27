@@ -9,3 +9,5 @@ nat-detect.workspace = true
 bytes.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
+bytecodec.workspace = true
+trackable = "1.3.0"

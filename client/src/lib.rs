@@ -1,4 +1,4 @@
-mod client;
+pub mod client;
 mod constant;
 mod errors;
 

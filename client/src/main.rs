@@ -1,9 +1,12 @@
 use client;
-use log::info;
+use client::client::instructions::Instruction;
+
+use log::{info, warn};
 use std::{
     env::args,
     io::{stdin, stdout, Write},
 };
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -18,10 +21,24 @@ async fn main() -> anyhow::Result<()> {
         let mut email = String::new();
         let stdin = stdin();
         stdin.read_line(&mut email).unwrap();
-        email
+        email.trim().to_string()
     };
 
     let mut client = client::Client::new(email, server_addr.parse().unwrap()).await;
 
-    client.run().await
+    let mut lines = BufReader::new(tokio::io::stdin()).lines();
+    while let Some(line) = lines.next_line().await? {
+        let line = line.trim();
+
+        if line.starts_with(':') {
+            match &line[1..] {
+                "q" => client.instruct(Instruction::Quit).await,
+                v => warn!("unknown instruction: {}", v),
+            }
+        } else {
+            client.run().await.unwrap();
+        }
+    }
+
+    Ok(())
 }

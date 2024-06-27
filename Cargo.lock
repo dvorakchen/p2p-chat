@@ -209,6 +209,9 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytecodec",
+ "bytes",
+ "common",
  "dotenv",
  "env_logger",
  "log",
@@ -239,9 +242,11 @@ name = "common"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytecodec",
  "bytes",
  "nat-detect",
  "thiserror",
+ "trackable 1.3.0",
 ]
 
 [[package]]
@@ -680,6 +685,7 @@ name = "server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytecodec",
  "bytes",
  "common",
  "dotenv",

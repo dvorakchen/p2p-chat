@@ -1,145 +1,59 @@
-use bytes::Bytes;
-use nat_detect::NatType;
-use std::net::SocketAddr;
+mod packets;
+mod peer;
+
+pub use packets::*;
+pub use peer::*;
+
+// use nat_detect::NatType;
+use std::{fmt::Display, ops::Deref};
 use thiserror::Error;
 
-#[derive(Debug)]
-pub struct Peer {
-    email: String,
-    nat_type: NatType,
-    pub_addr: SocketAddr,
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NatType(nat_detect::NatType);
 
-impl Peer {
-    pub fn get_pub_addr(&self) -> SocketAddr {
-        self.pub_addr
-    }
+pub const NAT_TYPE_UDP_BLOCKED: NatType = NatType(nat_detect::NatType::UdpBlocked);
+pub const NAT_TYPE_OPEN_INTERNET: NatType = NatType(nat_detect::NatType::OpenInternet);
+pub const NAT_TYPE_SYMMETRIC_UDP_FIREWALL: NatType =
+    NatType(nat_detect::NatType::SymmetricUdpFirewall);
+pub const NAT_TYPE_FULL_CONE: NatType = NatType(nat_detect::NatType::FullCone);
+pub const NAT_TYPE_RESTRICTED_CONE: NatType = NatType(nat_detect::NatType::RestrictedCone);
+pub const NAT_TYPE_PORT_RESTRICTED_CONE: NatType = NatType(nat_detect::NatType::PortRestrictedCone);
+pub const NAT_TYPE_SYMMETRIC: NatType = NatType(nat_detect::NatType::Symmetric);
+pub const NAT_TYPE_UNKNOW: NatType = NatType(nat_detect::NatType::Unknown);
 
-    pub fn get_email(&self) -> String {
-        self.email.clone()
-    }
+impl Deref for NatType {
+    type Target = nat_detect::NatType;
 
-    pub fn to_message_bytes(&self) -> Bytes {
-        let mut bytes = vec![];
-
-        bytes.extend(self.email.clone().as_bytes().to_vec());
-        bytes.push(b'\n');
-        bytes.extend(nat_type_2_string(self.nat_type).as_bytes().to_vec());
-        bytes.push(b'\n');
-        bytes.extend(self.pub_addr.to_string().as_bytes().to_vec());
-
-        bytes.into()
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
-pub fn string_2_nat_type(value: String) -> NatType {
-    match value.as_str() {
-        "UdpBlocked" => NatType::UdpBlocked,
-        "OpenInternet" => NatType::OpenInternet,
-        "SymmetricUdpFirewall" => NatType::SymmetricUdpFirewall,
-        "FullCone" => NatType::FullCone,
-        "RestrictedCone" => NatType::RestrictedCone,
-        "PortRestrictedCone" => NatType::PortRestrictedCone,
-        "Symmetric" => NatType::Symmetric,
-        _ => NatType::Unknown,
-    }
-}
-
-pub fn nat_type_2_string(nat_type: NatType) -> String {
-    match nat_type {
-        NatType::UdpBlocked => "UdpBlocked".to_string(),
-        NatType::OpenInternet => "OpenInternet".to_string(),
-        NatType::SymmetricUdpFirewall => "SymmetricUdpFirewall".to_string(),
-        NatType::FullCone => "FullCone".to_string(),
-        NatType::RestrictedCone => "RestrictedCone".to_string(),
-        NatType::PortRestrictedCone => "PortRestrictedCone".to_string(),
-        NatType::Symmetric => "Symmetric".to_string(),
-        NatType::Unknown => "Unknown".to_string(),
-    }
-}
-
-#[repr(u8)]
-enum PacketHeader {
-    Register,
-    Query,
-}
-
-impl TryFrom<u8> for PacketHeader {
+impl TryFrom<&str> for NatType {
     type Error = PacketTypeError;
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
-            0 => Ok(Self::Register),
-            1 => Ok(Self::Query),
-            _ => Err(PacketTypeError::InvalidBytes),
+            "UdpBlocked" => Ok(NatType(nat_detect::NatType::UdpBlocked)),
+            "OpenInternet" => Ok(NatType(nat_detect::NatType::OpenInternet)),
+            "SymmetricUdpFirewall" => Ok(NatType(nat_detect::NatType::SymmetricUdpFirewall)),
+            "FullCone" => Ok(NatType(nat_detect::NatType::FullCone)),
+            "RestrictedCone" => Ok(NatType(nat_detect::NatType::RestrictedCone)),
+            "PortRestrictedCone" => Ok(NatType(nat_detect::NatType::PortRestrictedCone)),
+            "Symmetric" => Ok(NatType(nat_detect::NatType::Symmetric)),
+            _ => Err(PacketTypeError::UnknownNatType),
         }
     }
 }
 
-pub enum PacketType {
-    /// repersenting a register message
-    /// ------------------
-    /// register
-    /// email
-    /// nat type
-    /// public address
-    ///
-    Register(Peer),
-    /// query the public address of Email
-    /// -----------------
-    /// query
-    /// email
-    QueryAddr(String),
-}
-
-impl TryFrom<Bytes> for PacketType {
-    type Error = PacketTypeError;
-
-    fn try_from(value: Bytes) -> Result<Self, Self::Error> {
-        let lines: Vec<_> = value.split(|v| *v == b'\n').collect();
-        if lines.len() < 1 {
-            return Err(PacketTypeError::InvalidBytes);
-        }
-
-        let header = lines[0];
-        if header.len() != 1 {
-            return Err(PacketTypeError::InvalidBytes);
-        }
-
-        let header = PacketHeader::try_from(header[0])?;
-
-        match header {
-            PacketHeader::Register => Self::convert_register(lines),
-            PacketHeader::Query => Self::convert_query(lines),
-        }
-        .map_err(|_| PacketTypeError::InvalidBytes)
+impl From<nat_detect::NatType> for NatType {
+    fn from(value: nat_detect::NatType) -> Self {
+        Self(value)
     }
 }
 
-impl PacketType {
-    fn convert_register(bytes: Vec<&[u8]>) -> anyhow::Result<Self> {
-        if bytes.len() != 4 {
-            return Err(PacketTypeError::InvalidBytes.into());
-        }
-
-        let email = String::from_utf8(bytes[1].to_vec())?;
-        let nat_type = string_2_nat_type(String::from_utf8(bytes[2].to_vec())?);
-        let pub_addr = String::from_utf8(bytes[3].to_vec())?.parse()?;
-
-        Ok(Self::Register(Peer {
-            email,
-            nat_type,
-            pub_addr,
-        }))
-    }
-
-    fn convert_query(bytes: Vec<&[u8]>) -> anyhow::Result<Self> {
-        if bytes.len() != 2 {
-            return Err(PacketTypeError::InvalidBytes.into());
-        }
-
-        let email = String::from_utf8(bytes[1].to_vec())?;
-
-        Ok(Self::QueryAddr(email))
+impl Display for NatType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.0)
     }
 }
 
@@ -147,4 +61,8 @@ impl PacketType {
 pub enum PacketTypeError {
     #[error("invalid bytes")]
     InvalidBytes,
+    #[error("unknown nat type")]
+    UnknownNatType,
+    #[error("packet header error, unknow header")]
+    HeaderError,
 }

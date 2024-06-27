@@ -8,7 +8,10 @@ anyhow.workspace = true
 nat-detect.workspace = true
 rand.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["time", "io-std", "io-util"] }
 env_logger.workspace = true
 log.workspace = true
 dotenv.workspace = true
+bytes.workspace = true
+bytecodec.workspace = true
+common = { path = "../common" }
