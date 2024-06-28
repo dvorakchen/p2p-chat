@@ -3,11 +3,11 @@ pub mod instructions;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Ok;
-use bytecodec::EncodeExt;
+use bytecodec::{DecodeExt, EncodeExt};
 use bytes::Bytes;
-use common::{PacketType, PacketTypeEncoder, Peer};
+use common::{PacketType, PacketTypeDecoder, PacketTypeEncoder, PacketTypeError, Peer};
 use instructions::Instruction;
-use log::{info, trace};
+use log::{error, info, trace, warn};
 use nat_detect::{nat_detect, NatType};
 use tokio::{net::UdpSocket, sync::Mutex};
 
@@ -19,6 +19,7 @@ pub struct Client {
     nat_type: common::NatType,
     server_addr: SocketAddr,
     pub_addr: SocketAddr,
+    talk_to: Option<Peer>,
 }
 
 impl Client {
@@ -29,6 +30,7 @@ impl Client {
             nat_type: common::NAT_TYPE_UNKNOW,
             server_addr,
             pub_addr: "0.0.0.0:0".parse().unwrap(),
+            talk_to: None,
         }
     }
 
@@ -81,16 +83,21 @@ impl Client {
             socket.send_to(&bytes, self.server_addr).await?;
         }
 
+        //  send Ping in cycles
         let ping_socket = Arc::clone(&self.socket);
         let server_addr = self.server_addr;
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(10));
+            let mut packet_type_encoder = PacketTypeEncoder::default();
+            let bytes = packet_type_encoder
+                .encode_into_bytes(PacketType::Ping)
+                .unwrap();
 
             loop {
                 interval.tick().await;
                 {
                     let socket = ping_socket.lock().await;
-                    socket.send_to(&[0u8; 0], server_addr).await.unwrap();
+                    socket.send_to(&bytes, server_addr).await.unwrap();
                 }
             }
         });
@@ -102,9 +109,26 @@ impl Client {
         match instruction {
             Instruction::Quit => { /* close client */ }
             Instruction::TalkTo(email) => {
-                self.ask_peer(email).await.unwrap();
+                if let Err(e) = self.handle_talk_to(email.clone()).await {
+                    error!("talk to {} error {}", email, e);
+                }
             }
         }
+    }
+
+    pub async fn handle_talk_to(&mut self, email: String) -> anyhow::Result<()> {
+        let peer = self.ask_peer(email.clone()).await?;
+        if peer.is_none() {
+            warn!("asked email: {} has not peer", email);
+            return Err(PacketTypeError::HasNotPeer.into());
+        }
+
+        let peer = peer.unwrap();
+        info!("asked email: {} peer: {:?}", email, peer);
+
+        self.talk_to = Some(peer);
+
+        Ok(())
     }
 
     pub async fn ask_peer(&mut self, peer_email: String) -> anyhow::Result<Option<Peer>> {
@@ -122,10 +146,14 @@ impl Client {
             Bytes::copy_from_slice(&buf[..size])
         };
 
-        if recv_bytes.len() == 0 {
-            Ok(None)
-        } else {
-            Ok(None)
+        let mut decoder = PacketTypeDecoder::default();
+        let packet_type = decoder.decode_from_bytes(&recv_bytes)?;
+
+        if let PacketType::Peer(peer) = packet_type {
+            if !peer.get_email().is_empty() {
+                return Ok(Some(peer));
+            }
         }
+        Ok(None)
     }
 }

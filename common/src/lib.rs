@@ -40,6 +40,7 @@ impl TryFrom<&str> for NatType {
             "RestrictedCone" => Ok(NatType(nat_detect::NatType::RestrictedCone)),
             "PortRestrictedCone" => Ok(NatType(nat_detect::NatType::PortRestrictedCone)),
             "Symmetric" => Ok(NatType(nat_detect::NatType::Symmetric)),
+            "Unknown" => Ok(NatType(nat_detect::NatType::Symmetric)),
             _ => Err(PacketTypeError::UnknownNatType),
         }
     }
@@ -65,4 +66,6 @@ pub enum PacketTypeError {
     UnknownNatType,
     #[error("packet header error, unknow header")]
     HeaderError,
+    #[error("has not peer")]
+    HasNotPeer,
 }

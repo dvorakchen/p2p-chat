@@ -5,7 +5,7 @@ use bytecodec::{
     ByteCount, Decode, DecodeExt, Encode, SizedEncode,
 };
 
-use crate::{peer::Peer, PacketTypeError, PeerDecoder, PeerEncoder};
+use crate::{peer::Peer, PacketTypeError, PeerDecoder, PeerEncoder, PingDecoder, PingEncoder};
 use trackable::track;
 
 const HEADER_BYTES_LEN: usize = 1;
@@ -22,6 +22,8 @@ pub enum PacketType {
     Query(String),
     /// register the current peer information to server
     Register(Peer),
+    Ping,
+    Peer(Peer),
 }
 
 #[derive(Default)]
@@ -30,12 +32,16 @@ pub struct PacketTypeEncoder {
     header_encoder: U8Encoder,
     query_encoder: Utf8Encoder,
     register_encoder: PeerEncoder,
+    ping_encoder: PingEncoder,
+    peer_encoder: PeerEncoder,
 }
 
 #[derive(Clone, Copy)]
 enum PacketTypeEncodeDecoderType {
     Query = 0,
     Register = 1,
+    Ping = 2,
+    Peer = 3,
 }
 
 impl TryFrom<u8> for PacketTypeEncodeDecoderType {
@@ -45,9 +51,25 @@ impl TryFrom<u8> for PacketTypeEncodeDecoderType {
         match value {
             0 => Ok(Self::Query),
             1 => Ok(Self::Register),
+            2 => Ok(Self::Ping),
+            3 => Ok(Self::Peer),
             _ => Err(PacketTypeError::HeaderError),
         }
     }
+}
+
+macro_rules! try_encode {
+    ($encoder: expr, $buf: expr, $eos: expr) => {
+        $encoder.encode(&mut $buf[HEADER_BYTES_LEN + NEWLINE_BYTES_LEN..], $eos)
+    };
+}
+macro_rules! try_start_encode {
+    ($self: expr, $vant:expr, $encoder: expr, $encode_item: expr) => {
+        use PacketTypeEncodeDecoderType::*;
+        $self.header_encoder.start_encoding($vant as u8)?;
+        $self.packet_type = Some($vant);
+        $encoder.start_encoding($encode_item)?;
+    };
 }
 
 impl Encode for PacketTypeEncoder {
@@ -59,28 +81,26 @@ impl Encode for PacketTypeEncoder {
         buf[HEADER_BYTES_LEN] = b'\n';
 
         match self.packet_type.as_ref().unwrap() {
-            &PacketTypeEncodeDecoderType::Query => self
-                .query_encoder
-                .encode(&mut buf[HEADER_BYTES_LEN + NEWLINE_BYTES_LEN..], eos),
-            &PacketTypeEncodeDecoderType::Register => self
-                .register_encoder
-                .encode(&mut buf[HEADER_BYTES_LEN + NEWLINE_BYTES_LEN..], eos),
+            &PacketTypeEncodeDecoderType::Query => try_encode!(self.query_encoder, buf, eos),
+            &PacketTypeEncodeDecoderType::Register => try_encode!(self.register_encoder, buf, eos),
+            &PacketTypeEncodeDecoderType::Ping => try_encode!(self.ping_encoder, buf, eos),
+            &PacketTypeEncodeDecoderType::Peer => try_encode!(self.peer_encoder, buf, eos),
         }
     }
 
     fn start_encoding(&mut self, item: Self::Item) -> bytecodec::Result<()> {
         match item {
             Self::Item::Query(email) => {
-                self.header_encoder
-                    .start_encoding(PacketTypeEncodeDecoderType::Query as u8)?;
-                self.packet_type = Some(PacketTypeEncodeDecoderType::Query);
-                self.query_encoder.start_encoding(email)?;
+                try_start_encode!(self, Query, self.query_encoder, email);
             }
             Self::Item::Register(peer) => {
-                self.header_encoder
-                    .start_encoding(PacketTypeEncodeDecoderType::Register as u8)?;
-                self.packet_type = Some(PacketTypeEncodeDecoderType::Register);
-                self.register_encoder.start_encoding(peer)?;
+                try_start_encode!(self, Register, self.register_encoder, peer);
+            }
+            Self::Item::Ping => {
+                try_start_encode!(self, Ping, self.ping_encoder, ());
+            }
+            Self::Item::Peer(peer) => {
+                try_start_encode!(self, Peer, self.peer_encoder, peer);
             }
         }
 
@@ -96,6 +116,8 @@ impl Encode for PacketTypeEncoder {
             && match self.packet_type.as_ref().unwrap() {
                 &PacketTypeEncodeDecoderType::Query => self.query_encoder.is_idle(),
                 &PacketTypeEncodeDecoderType::Register => self.register_encoder.is_idle(),
+                &PacketTypeEncodeDecoderType::Ping => self.ping_encoder.is_idle(),
+                &PacketTypeEncodeDecoderType::Peer => self.peer_encoder.is_idle(),
             }
     }
 }
@@ -108,6 +130,8 @@ impl SizedEncode for PacketTypeEncoder {
                 &PacketTypeEncodeDecoderType::Register => {
                     self.register_encoder.exact_requiring_bytes()
                 }
+                &PacketTypeEncodeDecoderType::Ping => self.ping_encoder.exact_requiring_bytes(),
+                &PacketTypeEncodeDecoderType::Peer => self.peer_encoder.exact_requiring_bytes(),
             }
             + NEWLINE_BYTES_LEN as u64
     }
@@ -119,6 +143,8 @@ pub struct PacketTypeDecoder {
     header_decoder: U8Decoder,
     query_decoder: Utf8Decoder,
     register_decoder: PeerDecoder,
+    ping_decoder: PingDecoder,
+    peer_decoder: PeerDecoder,
 }
 
 impl Decode for PacketTypeDecoder {
@@ -141,6 +167,12 @@ impl Decode for PacketTypeDecoder {
             &PacketTypeEncodeDecoderType::Register => {
                 bytecodec_try_decode!(self.register_decoder, offset, buf, eos);
             }
+            &PacketTypeEncodeDecoderType::Ping => {
+                bytecodec_try_decode!(self.ping_decoder, offset, buf, eos);
+            }
+            &PacketTypeEncodeDecoderType::Peer => {
+                bytecodec_try_decode!(self.peer_decoder, offset, buf, eos);
+            }
         }
 
         Ok(offset)
@@ -154,6 +186,10 @@ impl Decode for PacketTypeDecoder {
             &PacketTypeEncodeDecoderType::Register => Ok(Self::Item::Register(
                 self.register_decoder.finish_decoding()?,
             )),
+            &PacketTypeEncodeDecoderType::Ping => Ok(Self::Item::Ping),
+            &PacketTypeEncodeDecoderType::Peer => {
+                Ok(Self::Item::Peer(self.peer_decoder.finish_decoding()?))
+            }
         }
     }
 
@@ -161,6 +197,8 @@ impl Decode for PacketTypeDecoder {
         match self.packet_type.as_ref().unwrap() {
             &PacketTypeEncodeDecoderType::Query => self.query_decoder.requiring_bytes(),
             &PacketTypeEncodeDecoderType::Register => self.register_decoder.requiring_bytes(),
+            &PacketTypeEncodeDecoderType::Ping => self.ping_decoder.requiring_bytes(),
+            &PacketTypeEncodeDecoderType::Peer => self.peer_decoder.requiring_bytes(),
         }
         .add_for_decoding(self.header_decoder.requiring_bytes())
     }
@@ -170,6 +208,8 @@ impl Decode for PacketTypeDecoder {
             && match self.packet_type.as_ref().unwrap() {
                 &PacketTypeEncodeDecoderType::Query => self.query_decoder.is_idle(),
                 &PacketTypeEncodeDecoderType::Register => self.register_decoder.is_idle(),
+                &PacketTypeEncodeDecoderType::Ping => self.ping_decoder.is_idle(),
+                &PacketTypeEncodeDecoderType::Peer => self.peer_decoder.is_idle(),
             }
     }
 }
@@ -179,7 +219,7 @@ mod test {
     use bytecodec::{DecodeExt, EncodeExt};
 
     use crate::{
-        packets::PacketTypeEncodeDecoderType, NatType, PacketType, PacketTypeDecoder,
+        packets::PacketTypeEncodeDecoderType, peer, NatType, PacketType, PacketTypeDecoder,
         PacketTypeEncoder, Peer, NAT_TYPE_PORT_RESTRICTED_CONE,
     };
 
@@ -211,7 +251,7 @@ mod test {
 
         const EXPECTED_EMAIL: &str = "a";
         const EXPECTED_NAT_TYPE: NatType = NAT_TYPE_PORT_RESTRICTED_CONE;
-        const EXPECTED_PUB_ADDR: &str = "127.0.0.1:9989";
+        const EXPECTED_PUB_ADDR: &str = "119.34.161.150:4548";
 
         let bytes = encoder
             .encode_into_bytes(PacketType::Register(Peer::new(
@@ -263,7 +303,7 @@ mod test {
 
         const EXPECTED_EMAIL: &str = "a";
         const EXPECTED_NAT_TYPE: NatType = NAT_TYPE_PORT_RESTRICTED_CONE;
-        const EXPECTED_PUB_ADDR: &str = "127.0.0.1:9989";
+        const EXPECTED_PUB_ADDR: &str = "119.34.161.150:4548";
 
         let mut bytes = Vec::new();
         bytes.push(PacketTypeEncodeDecoderType::Register as u8);
@@ -281,6 +321,89 @@ mod test {
             assert_eq!(peer.get_nat_type(), EXPECTED_NAT_TYPE);
             assert_eq!(peer.get_email(), EXPECTED_EMAIL);
             true
-        } else { false })
+        } else {
+            false
+        })
+    }
+
+    #[test]
+    fn test_encode_ping() {
+        let mut encoder = PacketTypeEncoder::default();
+
+        let expected_result = vec![PacketTypeEncodeDecoderType::Ping as u8, b'\n'];
+        let ping = PacketType::Ping;
+
+        let bytes = encoder.encode_into_bytes(ping).unwrap();
+
+        assert_eq!(expected_result, bytes);
+    }
+
+    #[test]
+    fn test_decode_ping() {
+        let mut decoder = PacketTypeDecoder::default();
+
+        let bytes = vec![PacketTypeEncodeDecoderType::Ping as u8, b'\n'];
+
+        let packet = decoder.decode_from_bytes(&bytes).unwrap();
+
+        assert!(if let PacketType::Ping = packet {
+            true
+        } else {
+            false
+        });
+    }
+
+    #[test]
+    fn test_encode_peer() {
+        let mut encoder = PacketTypeEncoder::default();
+
+        const EXPECTED_EMAIL: &str = "a";
+        const EXPECTED_NAT_TYPE: NatType = NAT_TYPE_PORT_RESTRICTED_CONE;
+        const EXPECTED_PUB_ADDR: &str = "119.34.161.150:4548";
+
+        let bytes = encoder
+            .encode_into_bytes(PacketType::Peer(Peer::new(
+                EXPECTED_EMAIL,
+                EXPECTED_NAT_TYPE,
+                EXPECTED_PUB_ADDR.parse().unwrap(),
+            )))
+            .unwrap();
+
+        let mut expected_result = vec![PacketTypeEncodeDecoderType::Peer as u8, b'\n'];
+        expected_result.extend(EXPECTED_EMAIL.as_bytes());
+        expected_result.push(b'\n');
+        expected_result.extend(EXPECTED_NAT_TYPE.to_string().as_bytes());
+        expected_result.push(b'\n');
+        expected_result.extend(EXPECTED_PUB_ADDR.as_bytes());
+
+        assert_eq!(expected_result, bytes);
+    }
+
+    #[test]
+    fn test_decode_peer() {
+        let mut decoder = PacketTypeDecoder::default();
+
+        const EXPECTED_EMAIL: &str = "a";
+        const EXPECTED_NAT_TYPE: NatType = NAT_TYPE_PORT_RESTRICTED_CONE;
+        const EXPECTED_PUB_ADDR: &str = "119.34.161.150:4548";
+
+        let mut bytes = vec![PacketTypeEncodeDecoderType::Peer as u8, b'\n'];
+        bytes.extend(EXPECTED_EMAIL.as_bytes());
+        bytes.push(b'\n');
+        bytes.extend(EXPECTED_NAT_TYPE.to_string().as_bytes());
+        bytes.push(b'\n');
+        bytes.extend(EXPECTED_PUB_ADDR.as_bytes());
+
+        let packet = decoder.decode_from_bytes(&bytes).unwrap();
+
+        assert!(if let PacketType::Peer(peer) = packet {
+            assert_eq!(peer.get_email(), EXPECTED_EMAIL);
+            assert_eq!(peer.get_nat_type(), EXPECTED_NAT_TYPE);
+            assert_eq!(peer.get_pub_addr(), EXPECTED_PUB_ADDR.parse().unwrap());
+
+            true
+        } else {
+            false
+        });
     }
 }

@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use bytecodec::{
     bytecodec_try_decode, bytecodec_try_encode,
     bytes::{Utf8Decoder, Utf8Encoder},
+    null::{NullDecoder, NullEncoder},
     Decode, Encode, ErrorKind, SizedEncode,
 };
 use trackable::track;
@@ -237,6 +238,50 @@ impl Decode for PubAddrDecoder {
 impl SizedEncode for PubAddrEncoder {
     fn exact_requiring_bytes(&self) -> u64 {
         self.0.exact_requiring_bytes()
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct PingEncoder(NullEncoder);
+
+impl Encode for PingEncoder {
+    type Item = ();
+
+    fn encode(&mut self, buf: &mut [u8], eos: bytecodec::Eos) -> bytecodec::Result<usize> {
+        self.0.encode(buf, eos)
+    }
+
+    fn start_encoding(&mut self, item: Self::Item) -> bytecodec::Result<()> {
+        self.0.start_encoding(item)
+    }
+
+    fn requiring_bytes(&self) -> bytecodec::ByteCount {
+        self.0.requiring_bytes()
+    }
+}
+
+impl SizedEncode for PingEncoder {
+    fn exact_requiring_bytes(&self) -> u64 {
+        self.0.exact_requiring_bytes()
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct PingDecoder(NullDecoder);
+
+impl Decode for PingDecoder {
+    type Item = ();
+
+    fn decode(&mut self, buf: &[u8], eos: bytecodec::Eos) -> bytecodec::Result<usize> {
+        self.0.decode(buf, eos)
+    }
+
+    fn finish_decoding(&mut self) -> bytecodec::Result<Self::Item> {
+        self.0.finish_decoding()
+    }
+
+    fn requiring_bytes(&self) -> bytecodec::ByteCount {
+        self.0.requiring_bytes()
     }
 }
 
