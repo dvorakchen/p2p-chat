@@ -49,8 +49,13 @@ impl Server {
                 debug!("ping");
                 self.ping_count += 1;
             }
-            PacketType::Peer(_) => { /* ignore */ }
+            _ => { /* ignore */ }
         }
+    }
+
+    #[allow(dead_code)]
+    async fn handle_query_list(&mut self, _recv_addr: SocketAddr) {
+        todo!()
     }
 
     async fn handle_query_peer(&mut self, email: String, recv_addr: SocketAddr) {

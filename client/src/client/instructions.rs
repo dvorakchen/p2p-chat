@@ -1,4 +1,6 @@
 pub enum Instruction {
     Quit,
-    TalkTo(String)
+    TalkTo(String),
+    List,
+    SendMessage(String)
 }

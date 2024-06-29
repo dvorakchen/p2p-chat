@@ -5,7 +5,10 @@ use bytecodec::{
     ByteCount, Decode, DecodeExt, Encode, SizedEncode,
 };
 
-use crate::{peer::Peer, PacketTypeError, PeerDecoder, PeerEncoder, PingDecoder, PingEncoder};
+use crate::{
+    peer::Peer, ListDecoder, PacketTypeError, PeerDecoder, PeerEncoder, PingDecoder, PingEncoder,
+    QueryListEncoder,
+};
 use trackable::track;
 
 const HEADER_BYTES_LEN: usize = 1;
@@ -24,6 +27,9 @@ pub enum PacketType {
     Register(Peer),
     Ping,
     Peer(Peer),
+    /// query all activity peers
+    QueryList,
+    Message(String),
 }
 
 #[derive(Default)]
@@ -34,6 +40,8 @@ pub struct PacketTypeEncoder {
     register_encoder: PeerEncoder,
     ping_encoder: PingEncoder,
     peer_encoder: PeerEncoder,
+    query_list_encoder: QueryListEncoder,
+    message_encoder: Utf8Encoder,
 }
 
 #[derive(Clone, Copy)]
@@ -42,6 +50,8 @@ enum PacketTypeEncodeDecoderType {
     Register = 1,
     Ping = 2,
     Peer = 3,
+    QueryList = 4,
+    Message = 5,
 }
 
 impl TryFrom<u8> for PacketTypeEncodeDecoderType {
@@ -53,6 +63,8 @@ impl TryFrom<u8> for PacketTypeEncodeDecoderType {
             1 => Ok(Self::Register),
             2 => Ok(Self::Ping),
             3 => Ok(Self::Peer),
+            4 => Ok(Self::QueryList),
+            5 => Ok(Self::Message),
             _ => Err(PacketTypeError::HeaderError),
         }
     }
@@ -85,6 +97,10 @@ impl Encode for PacketTypeEncoder {
             &PacketTypeEncodeDecoderType::Register => try_encode!(self.register_encoder, buf, eos),
             &PacketTypeEncodeDecoderType::Ping => try_encode!(self.ping_encoder, buf, eos),
             &PacketTypeEncodeDecoderType::Peer => try_encode!(self.peer_encoder, buf, eos),
+            &PacketTypeEncodeDecoderType::QueryList => {
+                try_encode!(self.query_list_encoder, buf, eos)
+            }
+            &PacketTypeEncodeDecoderType::Message => try_encode!(self.message_encoder, buf, eos),
         }
     }
 
@@ -102,6 +118,12 @@ impl Encode for PacketTypeEncoder {
             Self::Item::Peer(peer) => {
                 try_start_encode!(self, Peer, self.peer_encoder, peer);
             }
+            Self::Item::QueryList => {
+                try_start_encode!(self, QueryList, self.query_list_encoder, ());
+            }
+            Self::Item::Message(message) => {
+                try_start_encode!(self, Message, self.message_encoder, message);
+            }
         }
 
         Ok(())
@@ -118,6 +140,8 @@ impl Encode for PacketTypeEncoder {
                 &PacketTypeEncodeDecoderType::Register => self.register_encoder.is_idle(),
                 &PacketTypeEncodeDecoderType::Ping => self.ping_encoder.is_idle(),
                 &PacketTypeEncodeDecoderType::Peer => self.peer_encoder.is_idle(),
+                &PacketTypeEncodeDecoderType::QueryList => self.query_list_encoder.is_idle(),
+                &PacketTypeEncodeDecoderType::Message => self.message_encoder.is_idle(),
             }
     }
 }
@@ -132,6 +156,12 @@ impl SizedEncode for PacketTypeEncoder {
                 }
                 &PacketTypeEncodeDecoderType::Ping => self.ping_encoder.exact_requiring_bytes(),
                 &PacketTypeEncodeDecoderType::Peer => self.peer_encoder.exact_requiring_bytes(),
+                &PacketTypeEncodeDecoderType::QueryList => {
+                    self.query_list_encoder.exact_requiring_bytes()
+                }
+                &PacketTypeEncodeDecoderType::Message => {
+                    self.message_encoder.exact_requiring_bytes()
+                }
             }
             + NEWLINE_BYTES_LEN as u64
     }
@@ -145,6 +175,8 @@ pub struct PacketTypeDecoder {
     register_decoder: PeerDecoder,
     ping_decoder: PingDecoder,
     peer_decoder: PeerDecoder,
+    list_decoder: ListDecoder,
+    message_decoder: Utf8Decoder,
 }
 
 impl Decode for PacketTypeDecoder {
@@ -173,6 +205,12 @@ impl Decode for PacketTypeDecoder {
             &PacketTypeEncodeDecoderType::Peer => {
                 bytecodec_try_decode!(self.peer_decoder, offset, buf, eos);
             }
+            &PacketTypeEncodeDecoderType::QueryList => {
+                bytecodec_try_decode!(self.list_decoder, offset, buf, eos);
+            }
+            &PacketTypeEncodeDecoderType::Message => {
+                bytecodec_try_decode!(self.message_decoder, offset, buf, eos);
+            }
         }
 
         Ok(offset)
@@ -190,6 +228,10 @@ impl Decode for PacketTypeDecoder {
             &PacketTypeEncodeDecoderType::Peer => {
                 Ok(Self::Item::Peer(self.peer_decoder.finish_decoding()?))
             }
+            &PacketTypeEncodeDecoderType::QueryList => Ok(Self::Item::QueryList),
+            &PacketTypeEncodeDecoderType::Message => {
+                Ok(Self::Item::Message(self.message_decoder.finish_decoding()?))
+            }
         }
     }
 
@@ -199,6 +241,8 @@ impl Decode for PacketTypeDecoder {
             &PacketTypeEncodeDecoderType::Register => self.register_decoder.requiring_bytes(),
             &PacketTypeEncodeDecoderType::Ping => self.ping_decoder.requiring_bytes(),
             &PacketTypeEncodeDecoderType::Peer => self.peer_decoder.requiring_bytes(),
+            &PacketTypeEncodeDecoderType::QueryList => self.list_decoder.requiring_bytes(),
+            &PacketTypeEncodeDecoderType::Message => self.message_decoder.requiring_bytes(),
         }
         .add_for_decoding(self.header_decoder.requiring_bytes())
     }
@@ -210,6 +254,8 @@ impl Decode for PacketTypeDecoder {
                 &PacketTypeEncodeDecoderType::Register => self.register_decoder.is_idle(),
                 &PacketTypeEncodeDecoderType::Ping => self.ping_decoder.is_idle(),
                 &PacketTypeEncodeDecoderType::Peer => self.peer_decoder.is_idle(),
+                &PacketTypeEncodeDecoderType::QueryList => self.list_decoder.is_idle(),
+                &PacketTypeEncodeDecoderType::Message => self.message_decoder.is_idle(),
             }
     }
 }
@@ -219,7 +265,7 @@ mod test {
     use bytecodec::{DecodeExt, EncodeExt};
 
     use crate::{
-        packets::PacketTypeEncodeDecoderType, peer, NatType, PacketType, PacketTypeDecoder,
+        packets::PacketTypeEncodeDecoderType, NatType, PacketType, PacketTypeDecoder,
         PacketTypeEncoder, Peer, NAT_TYPE_PORT_RESTRICTED_CONE,
     };
 
@@ -347,6 +393,33 @@ mod test {
         let packet = decoder.decode_from_bytes(&bytes).unwrap();
 
         assert!(if let PacketType::Ping = packet {
+            true
+        } else {
+            false
+        });
+    }
+
+    #[test]
+    fn test_encode_list() {
+        let mut encoder = PacketTypeEncoder::default();
+
+        let expected_result = vec![PacketTypeEncodeDecoderType::QueryList as u8, b'\n'];
+        let list = PacketType::QueryList;
+
+        let bytes = encoder.encode_into_bytes(list).unwrap();
+
+        assert_eq!(expected_result, bytes);
+    }
+
+    #[test]
+    fn test_decode_list() {
+        let mut decoder = PacketTypeDecoder::default();
+
+        let bytes = vec![PacketTypeEncodeDecoderType::QueryList as u8, b'\n'];
+
+        let packet = decoder.decode_from_bytes(&bytes).unwrap();
+
+        assert!(if let PacketType::QueryList = packet {
             true
         } else {
             false

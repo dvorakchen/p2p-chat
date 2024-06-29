@@ -7,7 +7,7 @@ use bytecodec::{DecodeExt, EncodeExt};
 use bytes::Bytes;
 use common::{PacketType, PacketTypeDecoder, PacketTypeEncoder, PacketTypeError, Peer};
 use instructions::Instruction;
-use log::{error, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 use nat_detect::{nat_detect, NatType};
 use tokio::{net::UdpSocket, sync::Mutex};
 
@@ -113,10 +113,43 @@ impl Client {
                     error!("talk to {} error {}", email, e);
                 }
             }
+            Instruction::List => {
+                self.handle_list().await;
+            }
+            Instruction::SendMessage(msg) => {
+                if self.talk_to.is_none() {
+                    warn!("you have not specified a peer");
+                    return;
+                }
+                self.handle_send_msg(msg).await;
+            }
         }
     }
 
-    pub async fn handle_talk_to(&mut self, email: String) -> anyhow::Result<()> {
+    async fn handle_send_msg(&mut self, msg: String) {
+        if self.talk_to.is_none() {
+            return;
+        }
+
+        let peer = self.talk_to.as_ref().unwrap();
+        let peer_addr = peer.get_pub_addr();
+
+        debug!("send message: <{}> to {}", msg, peer_addr);
+
+        let bytes = {
+            let mut encoder = PacketTypeEncoder::default();
+            let packet = PacketType::Message(msg);
+            encoder.encode_into_bytes(packet).unwrap()
+        };
+
+        let socket = self.socket.lock().await;
+        socket.send_to(&bytes, peer_addr).await.unwrap();
+        debug!("sent");
+    }
+
+    async fn handle_list(&mut self) {}
+
+    async fn handle_talk_to(&mut self, email: String) -> anyhow::Result<()> {
         let peer = self.ask_peer(email.clone()).await?;
         if peer.is_none() {
             warn!("asked email: {} has not peer", email);
@@ -131,7 +164,7 @@ impl Client {
         Ok(())
     }
 
-    pub async fn ask_peer(&mut self, peer_email: String) -> anyhow::Result<Option<Peer>> {
+    async fn ask_peer(&mut self, peer_email: String) -> anyhow::Result<Option<Peer>> {
         let mut packet_type_encoder = PacketTypeEncoder::default();
 
         let packet_type = PacketType::Query(peer_email);

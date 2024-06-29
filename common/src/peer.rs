@@ -242,6 +242,50 @@ impl SizedEncode for PubAddrEncoder {
 }
 
 #[derive(Debug, Default)]
+pub struct QueryListEncoder(NullEncoder);
+
+impl Encode for QueryListEncoder {
+    type Item = ();
+
+    fn encode(&mut self, buf: &mut [u8], eos: bytecodec::Eos) -> bytecodec::Result<usize> {
+        self.0.encode(buf, eos)
+    }
+
+    fn start_encoding(&mut self, item: Self::Item) -> bytecodec::Result<()> {
+        self.0.start_encoding(item)
+    }
+
+    fn requiring_bytes(&self) -> bytecodec::ByteCount {
+        self.0.requiring_bytes()
+    }
+}
+
+impl SizedEncode for QueryListEncoder {
+    fn exact_requiring_bytes(&self) -> u64 {
+        self.0.exact_requiring_bytes()
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct ListDecoder(NullDecoder);
+
+impl Decode for ListDecoder {
+    type Item = ();
+
+    fn decode(&mut self, buf: &[u8], eos: bytecodec::Eos) -> bytecodec::Result<usize> {
+        self.0.decode(buf, eos)
+    }
+
+    fn finish_decoding(&mut self) -> bytecodec::Result<Self::Item> {
+        self.0.finish_decoding()
+    }
+
+    fn requiring_bytes(&self) -> bytecodec::ByteCount {
+        self.0.requiring_bytes()
+    }
+}
+
+#[derive(Debug, Default)]
 pub struct PingEncoder(NullEncoder);
 
 impl Encode for PingEncoder {
