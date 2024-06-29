@@ -1,0 +1,9 @@
+services:
+  server:
+    build:
+      context: .
+      target: final
+    ports:
+      - 9876:9876/udp
+    environment:
+      - RUST_LOG=info

@@ -5,7 +5,7 @@ use server::Server;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    dotenv::dotenv().unwrap();
+    _ = dotenv::dotenv();
     env_logger::init();
 
     let listen = args().nth(1).unwrap();
