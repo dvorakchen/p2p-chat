@@ -1,21 +1,23 @@
 pub mod instructions;
+mod socket;
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use anyhow::Ok;
 use bytecodec::{DecodeExt, EncodeExt};
 use bytes::Bytes;
 use common::{PacketType, PacketTypeDecoder, PacketTypeEncoder, PacketTypeError, Peer};
 use instructions::Instruction;
 use log::{debug, error, info, trace, warn};
 use nat_detect::{nat_detect, NatType};
-use tokio::{net::UdpSocket, sync::Mutex};
+use socket::{ReadUdpSocket, WriteUdpSocket};
+use tokio::net::UdpSocket;
 
 use crate::{constant::DEFAULT_STUN_ADDRESS, errors::Errors};
 
 pub struct Client {
     email: String,
-    socket: Arc<Mutex<UdpSocket>>,
+    read_socket: Arc<ReadUdpSocket>,
+    write_socket: Arc<WriteUdpSocket>,
     nat_type: common::NatType,
     server_addr: SocketAddr,
     pub_addr: SocketAddr,
@@ -24,9 +26,15 @@ pub struct Client {
 
 impl Client {
     pub async fn new(email: impl AsRef<str>, server_addr: SocketAddr) -> Self {
+        let (read_socket, write_socket) = {
+            let socket = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+            socket::udpsocket_split(socket)
+        };
+
         Self {
             email: email.as_ref().to_string(),
-            socket: Arc::new(Mutex::new(UdpSocket::bind("0.0.0.0:0").await.unwrap())),
+            read_socket: Arc::new(read_socket),
+            write_socket: Arc::new(write_socket),
             nat_type: common::NAT_TYPE_UNKNOW,
             server_addr,
             pub_addr: "0.0.0.0:0".parse().unwrap(),
@@ -49,8 +57,8 @@ impl Client {
 
     async fn detect_nat_type(&mut self) -> anyhow::Result<(SocketAddr, NatType)> {
         let (stun_ser, pub_addr, nat_type) = {
-            let socket = self.socket.lock().await;
-            nat_detect(socket.local_addr()?, &DEFAULT_STUN_ADDRESS)
+            let local_addr = self.read_socket.local_addr()?;
+            nat_detect(local_addr, &DEFAULT_STUN_ADDRESS)
                 .await
                 .map_err(|_| Errors::NatDetectFailed)?
         };
@@ -79,12 +87,12 @@ impl Client {
         info!("packet bytes: {:?}", bytes);
 
         {
-            let socket = self.socket.lock().await;
-            socket.send_to(&bytes, self.server_addr).await?;
+            // let socket = self.socket.lock().await;
+            self.write_socket.send_to(&bytes, self.server_addr).await?;
         }
 
         //  send Ping in cycles
-        let ping_socket = Arc::clone(&self.socket);
+        let ping_socket = Arc::clone(&self.write_socket);
         let server_addr = self.server_addr;
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(10));
@@ -96,8 +104,7 @@ impl Client {
             loop {
                 interval.tick().await;
                 {
-                    let socket = ping_socket.lock().await;
-                    socket.send_to(&bytes, server_addr).await.unwrap();
+                    ping_socket.send_to(&bytes, server_addr).await.unwrap();
                 }
             }
         });
@@ -111,6 +118,9 @@ impl Client {
             Instruction::TalkTo(email) => {
                 if let Err(e) = self.handle_talk_to(email.clone()).await {
                     error!("talk to {} error {}", email, e);
+                } else {
+                    info!("peer: <{}> availabe", email);
+                    listen_incoming_message(Arc::clone(&self.read_socket));
                 }
             }
             Instruction::List => {
@@ -142,8 +152,7 @@ impl Client {
             encoder.encode_into_bytes(packet).unwrap()
         };
 
-        let socket = self.socket.lock().await;
-        socket.send_to(&bytes, peer_addr).await.unwrap();
+        self.write_socket.send_to(&bytes, peer_addr).await.unwrap();
         debug!("sent");
     }
 
@@ -171,11 +180,10 @@ impl Client {
         let bytes = packet_type_encoder.encode_into_bytes(packet_type)?;
 
         let recv_bytes = {
-            let socket = self.socket.lock().await;
-            socket.send_to(&bytes, self.server_addr).await?;
+            self.write_socket.send_to(&bytes, self.server_addr).await?;
 
             let mut buf = [0u8; 1024];
-            let (size, _) = socket.recv_from(&mut buf).await?;
+            let (size, _) = self.read_socket.recv_from(&mut buf).await?;
             Bytes::copy_from_slice(&buf[..size])
         };
 
@@ -189,4 +197,18 @@ impl Client {
         }
         Ok(None)
     }
+}
+fn listen_incoming_message(socket: Arc<ReadUdpSocket>) {
+    tokio::spawn(async move {
+        info!("listen incoming message");
+        let mut buf = [0u8; 1024];
+        while let Ok((size, addr)) = socket.recv_from(&mut buf).await {
+            if size == 0 {
+                continue;
+            }
+
+            info!("received from: {:?}", addr);
+            println!("received: {}", String::from_utf8(buf.to_vec()).unwrap());
+        }
+    });
 }

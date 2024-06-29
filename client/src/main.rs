@@ -51,6 +51,16 @@ async fn main() -> anyhow::Result<()> {
                         .instruct(Instruction::TalkTo(email.to_string()))
                         .await;
                 }
+                "s" => {
+                    if raw_instructions.len() < 2 {
+                        error!("wrong instruction: {}", line);
+                        continue;
+                    }
+                    let message = raw_instructions[1];
+                    client
+                        .instruct(Instruction::SendMessage(message.to_string()))
+                        .await;
+                }
                 v => warn!("unknown instruction: {}", v),
             }
         }
