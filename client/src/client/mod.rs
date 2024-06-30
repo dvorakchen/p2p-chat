@@ -120,7 +120,11 @@ impl Client {
                     error!("talk to {} error {}", email, e);
                 } else {
                     info!("peer: <{}> availabe", email);
-                    listen_incoming_message(Arc::clone(&self.read_socket));
+                    listen_incoming_message(
+                        Arc::clone(&self.read_socket),
+                        Arc::clone(&self.write_socket),
+                        self.talk_to.as_ref().unwrap().get_pub_addr(),
+                    );
                 }
             }
             Instruction::List => {
@@ -198,11 +202,23 @@ impl Client {
         Ok(None)
     }
 }
-fn listen_incoming_message(socket: Arc<ReadUdpSocket>) {
+fn listen_incoming_message(
+    read_socket: Arc<ReadUdpSocket>,
+    write_socket: Arc<WriteUdpSocket>,
+    remote_addr: SocketAddr,
+) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        loop {
+            interval.tick().await;
+            write_socket.send_to(b"ping!", remote_addr).await.unwrap();
+        }
+    });
+
     tokio::spawn(async move {
         info!("listen incoming message");
         let mut buf = [0u8; 1024];
-        while let Ok((size, addr)) = socket.recv_from(&mut buf).await {
+        while let Ok((size, addr)) = read_socket.recv_from(&mut buf).await {
             if size == 0 {
                 continue;
             }
